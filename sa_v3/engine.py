@@ -161,4 +161,4 @@ def make_trade(pos, exit_ts, exit_price, exit_reason, cost_bps):
         holding_candles=0, confidence=pos.confidence, layers_json=pos.layers_json,
     )
 
-def precompute_btc_regimes(btc_df, config
+def precompute_btc_regimes(btc_df, config):
