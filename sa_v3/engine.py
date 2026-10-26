@@ -162,3 +162,14 @@ def make_trade(pos, exit_ts, exit_price, exit_reason, cost_bps):
     )
 
 def precompute_btc_regimes(btc_df, config):
+    from . import layers
+    threshold = config['btc_macro']['strong_threshold']
+    out = []
+    if len(btc_df) < 60: return out
+    for i in range(59, len(btc_df)):
+        reading = layers.technical(btc_df.iloc[:i + 1])
+        b, s = reading['bullish_score'], reading['bearish_score']
+        regime = 'bullish' if b >= threshold else ('bearish' if s >= threshold else 'neutral')
+        out.append((int(btc_df.iloc[i]['ts']), regime))
+    return out
+
