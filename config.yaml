@@ -1,0 +1,160 @@
+# =============================================================
+# Signal Advisor v3 — Termux profile
+# 60-day scope, 3 symbols, day mode only (mobile-friendly)
+# =============================================================
+
+data:
+  exchange: bybit_linear
+  cache_dir: data/candles
+  default_days: 60
+
+symbols:
+  - ETH/USDT
+  - SOL/USDT
+
+btc_symbol: BTC/USDT
+
+costs:
+  fee_roundtrip_bps: 8
+  slippage_roundtrip_bps: 6
+
+risk:
+  starting_balance_usd: 1000
+  risk_pct_per_trade: 1.0
+  max_leverage: 5
+  min_net_rr: 1.0
+
+adaptive_target:
+  atr_multiplier: 1.4
+
+btc_macro:
+  enabled: true
+  htf_timeframe: "4h"
+  strong_threshold: 70
+  bullish:
+    buy_multiplier: 1.15
+    sell_multiplier: 0.70
+  bearish:
+    buy_multiplier: 0.50
+    sell_multiplier: 1.15
+
+modes:
+  scalp:
+    primary_timeframe: "5m"
+    confirm_timeframes: ["15m", "1h"]
+    min_score_to_signal:
+      buy: 73
+      sell: 65
+    min_score_gap: 10
+    evaluation_candles: 12
+    min_candles_before_invalidation: 2
+    success_move_bps: 20
+    rr: 1.5
+    atr_period: 14
+    min_stop_bps: 60
+    cooldown_minutes: 20
+    max_concurrent_positions: 3
+    trailing:
+      enabled: true
+      trail_distance_bps: 30
+    weights:
+      technical: 20
+      multi_timeframe: 15
+      volume_imbalance: 35
+      funding: 5
+      smc: 25
+    smc_weight_cap_if_htf_disagrees: 15
+
+  day:
+    primary_timeframe: "15m"
+    confirm_timeframes: ["1h", "4h"]
+    min_score_to_signal: 68
+    min_score_gap: 12
+    evaluation_candles: 20
+    min_candles_before_invalidation: 2
+    success_move_bps: 100
+    rr: 1.67
+    atr_period: 20
+    min_stop_bps: 60
+    cooldown_minutes: 90
+    max_concurrent_positions: 3
+    trailing:
+      enabled: true
+      trail_distance_bps: 30
+    weights:
+      technical: 35
+      multi_timeframe: 25
+      volume_imbalance: 15
+      funding: 15
+      smc: 10
+
+  swing:
+    primary_timeframe: "4h"
+    confirm_timeframes: ["1d"]
+    min_score_to_signal: 70
+    min_score_gap: 15
+    evaluation_candles: 30
+    min_candles_before_invalidation: 1
+    success_move_bps: 300
+    rr: 1.67
+    atr_period: 20
+    min_stop_bps: 150
+    cooldown_minutes: 360
+    max_concurrent_positions: 2
+    trailing:
+      enabled: true
+      trail_distance_bps: 30
+    weights:
+      technical: 25
+      multi_timeframe: 35
+      volume_imbalance: 5
+      funding: 25
+      smc: 10
+
+active_modes:
+  - scalp
+
+layers:
+  smc:
+    fractal_left: 5
+    fractal_right: 5
+  funding:
+    rolling_window: 100
+    min_history: 20
+  volume_imbalance:
+    lookback: 20
+    vol_multiplier: 1.5
+
+walkforward:
+  n_windows: 2
+  train_frac: 0.6
+  search_budget: 20
+  min_trades_in_train: 10
+  objective: sharpe_daily
+  random_seed: 42
+
+parameter_space:
+  day:
+    min_score_to_signal: {choices: [64, 66, 68, 70, 72]}
+    min_score_gap:        {choices: [10, 12, 15]}
+    rr:                   {choices: [1.5, 1.67, 1.85]}
+    min_stop_bps:         {choices: [50, 60, 70]}
+    atr_multiplier:       {choices: [1.0, 1.4, 1.8]}
+  scalp:
+    min_score_to_signal_buy:  {choices: [70, 73, 76]}
+    min_score_to_signal_sell: {choices: [60, 65, 69]}
+    min_score_gap:            {choices: [8, 10, 12]}
+    rr:                       {choices: [1.3, 1.5, 1.7]}
+    min_stop_bps:             {choices: [50, 60, 70]}
+    atr_multiplier:           {choices: [1.0, 1.4, 1.8]}
+  swing:
+    min_score_to_signal: {choices: [66, 70, 74]}
+    min_score_gap:       {choices: [12, 15, 18]}
+    rr:                  {choices: [1.5, 1.67, 1.85]}
+    min_stop_bps:        {choices: [120, 150, 180]}
+    atr_multiplier:      {choices: [1.0, 1.4, 1.8]}
+
+paper:
+  poll_interval_seconds: 120
+  journal_db: data/paper.db
+  dashboard_port: 5000
