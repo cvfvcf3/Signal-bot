@@ -55,7 +55,7 @@ modes:
     # NEW: Chop Filter (Agar 5m ATR 40 bps se kam ho to trade na kare)
     min_atr_bps: 40
     # NEW: Break Even (Agar profit 30 bps ho jaye to SL ko Entry+Fee par le aao)
-    break_even_trigger_bps: 30
+    break_even_trigger_bps: 70
     trailing:
       enabled: true
       trail_distance_bps: 30
