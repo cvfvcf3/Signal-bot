@@ -7,8 +7,6 @@ symbols:
   - ETH/USDT
   - SOL/USDT
   - XRP/USDT
-  - TAO/USDT
-  - LTC/USDT
 
 btc_symbol: BTC/USDT
 
