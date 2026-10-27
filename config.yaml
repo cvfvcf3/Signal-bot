@@ -6,6 +6,9 @@ data:
 symbols:
   - ETH/USDT
   - SOL/USDT
+  - XRP/USDT
+  - TAO/USDT
+  - LTC/USDT
 
 btc_symbol: BTC/USDT
 
@@ -15,7 +18,7 @@ costs:
 
 risk:
   starting_balance_usd: 1000
-  risk_pct_per_trade: 1.0
+  risk_pct_per_trade: 1.5
   max_leverage: 5
   min_net_rr: 1.0
 
@@ -37,60 +40,31 @@ modes:
   scalp:
     primary_timeframe: "5m"
     confirm_timeframes: ["15m", "1h"]
-    # STRICT RULES: Confidence barha diya
     min_score_to_signal:
-      buy: 78
-      sell: 72
-    # STRICT RULES: Gap barha diya taake sirf strong signals aayen
-    min_score_gap: 15
+      buy: 85
+      sell: 80
+    min_score_gap: 20
     evaluation_candles: 12
     min_candles_before_invalidation: 2
     success_move_bps: 20
     rr: 1.5
     atr_period: 14
     min_stop_bps: 60
-    # STRICT RULES: Cooldown 1 ghanta, sirf 1 position
-    cooldown_minutes: 60
-    max_concurrent_positions: 1
-    # NEW: Chop Filter (Agar 5m ATR 40 bps se kam ho to trade na kare)
+    cooldown_minutes: 30
+    max_concurrent_positions: 5
     min_atr_bps: 40
-    # NEW: Break Even (Agar profit 30 bps ho jaye to SL ko Entry+Fee par le aao)
+    min_adx: 25
     break_even_trigger_bps: 9999
     trailing:
       enabled: true
-      trail_distance_bps: 30
+      trail_distance_bps: 40
     weights:
-      technical: 20
-      multi_timeframe: 15
-      volume_imbalance: 35
+      technical: 30
+      multi_timeframe: 20
+      volume_imbalance: 20
       funding: 5
       smc: 25
     smc_weight_cap_if_htf_disagrees: 15
-
-  day:
-    primary_timeframe: "15m"
-    confirm_timeframes: ["1h", "4h"]
-    min_score_to_signal: 68
-    min_score_gap: 12
-    evaluation_candles: 20
-    min_candles_before_invalidation: 2
-    success_move_bps: 100
-    rr: 1.67
-    atr_period: 20
-    min_stop_bps: 60
-    cooldown_minutes: 90
-    max_concurrent_positions: 2
-    min_atr_bps: 60
-    break_even_trigger_bps: 9999
-    trailing:
-      enabled: true
-      trail_distance_bps: 30
-    weights:
-      technical: 35
-      multi_timeframe: 25
-      volume_imbalance: 15
-      funding: 15
-      smc: 10
 
 active_modes:
   - scalp
@@ -116,7 +90,7 @@ walkforward:
 
 parameter_space:
   scalp:
-    min_score_gap: {choices: [12, 15, 18]}
+    min_score_gap: {choices: [15, 20, 25]}
     rr: {choices: [1.5, 1.7, 2.0]}
     min_stop_bps: {choices: [50, 60, 70]}
     atr_multiplier: {choices: [1.2, 1.4, 1.8]}
