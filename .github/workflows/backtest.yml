@@ -28,10 +28,10 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Download Data
-        run: python main.py download --days ${{ github.event.inputs.days }} --symbols ETH/USDT,SOL/USDT --timeframes 5m,15m,1h,4h
+        run: python main.py download --days ${{ github.event.inputs.days }} --symbols ETH/USDT,SOL/USDT,XRP/USDT,TAO/USDT,LTC/USDT --timeframes 5m,15m,1h,4h
 
       - name: Run Backtest
-        run: python main.py backtest --mode ${{ github.event.inputs.mode }} --days ${{ github.event.inputs.days }} --symbols ETH/USDT,SOL/USDT
+        run: python main.py backtest --mode ${{ github.event.inputs.mode }} --days ${{ github.event.inputs.days }} --symbols ETH/USDT,SOL/USDT,XRP/USDT,TAO/USDT,LTC/USDT
 
       - name: Upload Report
         uses: actions/upload-artifact@v4
