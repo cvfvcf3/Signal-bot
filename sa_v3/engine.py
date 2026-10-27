@@ -281,3 +281,12 @@ def run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_m
                 )
                 open_positions[sym] = pos
                 last_signal
+
+def run_single_backtest(config, mode, symbols, store, start_ms, end_ms, verbose=False):
+    data, funding, btc_regimes = load_data_for_mode(config, mode, symbols, store, start_ms, end_ms)
+    result = run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_ms, end_ms, verbose=verbose)
+    from .metrics import compute_metrics
+    result["metrics"] = compute_metrics(result["trades"], result["equity"])
+    result["start_ms"] = start_ms
+    result["end_ms"] = end_ms
+    return result
