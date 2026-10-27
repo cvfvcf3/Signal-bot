@@ -103,22 +103,29 @@ def multi_timeframe(ohlcv_by_tf):
             details[tf] = "neutral"
     if usable == 0:
         return {"bullish_score": 0.0, "bearish_score": 0.0, "details": details}
-    return {"bullish_score": _clamp(bull_n / usable * 100),
-            "bearish_score": _clamp(bear_n / usable * 100), "details": details}
+    return {"bullish_score": _clamp(bull_n / usable * 100), "bearish_score": _clamp(bear_n / usable * 100), "details": details}
 
 def volume_imbalance(ohlcv, lookback=20, vol_multiplier=1.5):
     if len(ohlcv) < lookback:
         return _empty()
     recent = ohlcv.iloc[-lookback:].copy()
     body = recent["close"] - recent["open"]
+    upper_wick = recent["high"] - recent[["open", "close"]].max(axis=1)
+    lower_wick = recent[["open", "close"]].min(axis=1) - recent["low"]
+    
     sign = (body > 0).astype(float) - (body < 0).astype(float)
     rng = (recent["high"] - recent["low"]).replace(0, 1e-9)
     weight = recent["volume"] * (1.0 + (rng / rng.mean() - 1.0).abs())
-    signed = sign * weight
+    
+    bull_wick_pressure = (lower_wick / rng) * recent["volume"]
+    bear_wick_pressure = (upper_wick / rng) * recent["volume"]
+    
+    signed = (sign * weight) + bull_wick_pressure - bear_wick_pressure
     total = weight.sum()
     if total <= 0:
         return _empty()
     imbalance = float(signed.sum() / total)
+    
     avg_vol = recent["volume"].mean()
     last_vol = ohlcv["volume"].iloc[-1]
     vol_boost = 1.0
@@ -126,9 +133,7 @@ def volume_imbalance(ohlcv, lookback=20, vol_multiplier=1.5):
         vol_boost = 1.2
     bull = max(imbalance, 0) * 100 * vol_boost
     bear = max(-imbalance, 0) * 100 * vol_boost
-    return {"bullish_score": _clamp(bull), "bearish_score": _clamp(bear),
-            "details": {"imbalance": round(imbalance, 4),
-                        "vol_ratio": round(last_vol / avg_vol, 2) if avg_vol > 0 else 1.0}}
+    return {"bullish_score": _clamp(bull), "bearish_score": _clamp(bear), "details": {"imbalance": round(imbalance, 4), "vol_ratio": round(last_vol / avg_vol, 2) if avg_vol > 0 else 1.0}}
 
 def funding(funding_history, rolling_window=100, min_history=20):
     if funding_history is None or len(funding_history) < min_history:
@@ -143,8 +148,7 @@ def funding(funding_history, rolling_window=100, min_history=20):
         bear = (0.5 - p) * 2 * 100; bull = 0.0
     else:
         bull = bear = 0.0
-    return {"bullish_score": _clamp(bull), "bearish_score": _clamp(bear),
-            "details": {"rate": round(current, 6), "z": round(z, 3), "n": len(recent)}}
+    return {"bullish_score": _clamp(bull), "bearish_score": _clamp(bear), "details": {"rate": round(current, 6), "z": round(z, 3), "n": len(recent)}}
 
 W_BOS, W_CHOCH, W_OB, W_FVG, W_SWEEP = 40, 40, 10, 30, 20
 

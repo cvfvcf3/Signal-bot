@@ -1,11 +1,11 @@
-"""Backtest engine with Break-Even and Chop Filter."""
+"""Backtest engine with Break-Even and Chop Filter (ADX)."""
 from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from typing import Optional
 import pandas as pd
 from .strategy import Strategy
-from .utils import tf_to_ms, atr_pct, frac_to_bps
+from .utils import tf_to_ms, atr_pct, frac_to_bps, adx
 
 @dataclass
 class Position:
@@ -185,6 +185,7 @@ def run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_m
     cost_bps = _cost_bps(config)
     balance = config["risk"]["starting_balance_usd"]
     min_atr = mode_cfg.get("min_atr_bps", 0)
+    min_adx = mode_cfg.get("min_adx", 0)
 
     primary_maps = {}
     for sym in symbols:
@@ -254,6 +255,10 @@ def run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_m
                     current_atr = frac_to_bps(atr_pct(hist, period=mode_cfg["atr_period"]))
                     if current_atr < min_atr:
                         continue 
+                if min_adx > 0:
+                    current_adx = adx(hist, period=14)
+                    if current_adx < min_adx:
+                        continue
 
                 ctx = _build_context(config, mode, sym, ts, primary_maps[sym], idx, data, funding, btc_regimes, is_btc_map[sym])
                 if ctx is None: continue
@@ -275,76 +280,4 @@ def run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_m
                     layers_json=json.dumps({k: {"b": v["bullish_score"], "s": v["bearish_score"]} for k, v in decision["layers"].items()}),
                 )
                 open_positions[sym] = pos
-                last_signal_ts[sym] = ts
-
-        unrealized = 0.0
-        for sym, pos in open_positions.items():
-            idx = sym_ts_idx[sym].get(ts)
-            if idx is not None:
-                cp = float(primary_maps[sym].iloc[idx]["close"])
-                unrealized += pos.size_usd * _pnl_pct(pos.action, pos.entry_price, cp) / 100
-        equity_curve.append((ts, balance + unrealized))
-
-    for sym, pos in list(open_positions.items()):
-        df = primary_maps[sym]
-        last_row = df.iloc[-1]
-        trade = make_trade(pos, int(last_row["ts"]), float(last_row["close"]), "END_OF_DATA", cost_bps)
-        trade.holding_candles = len(df) - 1 - pos.entry_index
-        trades.append(trade); balance += trade.net_pnl_usd
-
-    equity_df = pd.DataFrame(equity_curve, columns=["ts", "balance"])
-    return {"mode": mode, "trades": [t.__dict__.copy() for t in trades], "equity": equity_df}
-
-def _build_context(config, mode, sym, ts, primary_df, idx, data, funding, btc_regimes, is_btc):
-    mode_cfg = config["modes"][mode]
-    primary_hist = primary_df.iloc[:idx + 1]
-    if len(primary_hist) < 60: return None
-    confirm = {}
-    for tf in mode_cfg["confirm_timeframes"]:
-        df = data[sym].get(tf)
-        confirm[tf] = df[df["ts"] <= ts] if df is not None else pd.DataFrame()
-    f_df = funding.get(sym)
-    f_hist = f_df[f_df["ts"] <= ts] if f_df is not None and len(f_df) else pd.DataFrame(columns=["ts", "rate"])
-    return {"mode": mode, "primary_ohlcv": primary_hist, "confirm_ohlcv": confirm, "funding": f_hist, "btc_regime": regime_at(btc_regimes, ts), "is_btc": is_btc}
-
-def _eval_invalidation(strategy, config, mode, sym, ts, data, funding, btc_regimes, is_btc):
-    mode_cfg = config["modes"][mode]
-    df = data[sym].get(mode_cfg["primary_timeframe"])
-    if df is None or len(df) == 0: return None
-    try: idx = df["ts"].tolist().index(ts)
-    except ValueError: return None
-    ctx = _build_context(config, mode, sym, ts, df.reset_index(drop=True), idx, data, funding, btc_regimes, is_btc)
-    return strategy.evaluate(ctx) if ctx else None
-
-def _is_reversed(action, reading, mode_cfg):
-    gap = mode_cfg["min_score_gap"]
-    if action == "BUY": return (reading["bearish_score"] - reading["bullish_score"]) >= gap
-    return (reading["bullish_score"] - reading["bearish_score"]) >= gap
-
-def load_data_for_mode(config, mode, symbols, store, start_ms, end_ms):
-    mode_cfg = config["modes"][mode]
-    needed_tfs = {mode_cfg["primary_timeframe"], *mode_cfg["confirm_timeframes"]}
-    needed_tfs.add(config["btc_macro"]["htf_timeframe"])
-    data, funding = {}, {}
-    all_syms = list(symbols)
-    if config["btc_symbol"] not in all_syms: all_syms.append(config["btc_symbol"])
-    for sym in all_syms:
-        data[sym] = {}
-        for tf in needed_tfs:
-            try: df = store.get(sym, tf, start_ms - 30 * tf_to_ms(tf), end_ms)
-            except Exception: df = pd.DataFrame()
-            data[sym][tf] = df
-        try: funding[sym] = store.get_funding(sym, start_ms - 30 * 86_400_000, end_ms)
-        except Exception: funding[sym] = pd.DataFrame(columns=["ts", "rate"])
-    btc_4h = data[config["btc_symbol"]].get(config["btc_macro"]["htf_timeframe"], pd.DataFrame())
-    btc_regimes = precompute_btc_regimes(btc_4h, config)
-    return data, funding, btc_regimes
-
-def run_single_backtest(config, mode, symbols, store, start_ms, end_ms, verbose=False):
-    data, funding, btc_regimes = load_data_for_mode(config, mode, symbols, store, start_ms, end_ms)
-    result = run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_ms, end_ms, verbose=verbose)
-    from .metrics import compute_metrics
-    result["metrics"] = compute_metrics(result["trades"], result["equity"])
-    result["start_ms"] = start_ms
-    result["end_ms"] = end_ms
-    return result
+                last_signal
