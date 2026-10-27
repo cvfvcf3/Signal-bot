@@ -16,7 +16,7 @@ costs:
 
 risk:
   starting_balance_usd: 1000
-  risk_pct_per_trade: 1.5
+  risk_pct_per_trade: 3.0
   max_leverage: 5
   min_net_rr: 1.0
 
@@ -39,9 +39,9 @@ modes:
     primary_timeframe: "5m"
     confirm_timeframes: ["15m", "1h"]
     min_score_to_signal:
-      buy: 82
-      sell: 78
-    min_score_gap: 15
+      buy: 80
+      sell: 75
+    min_score_gap: 12
     evaluation_candles: 12
     min_candles_before_invalidation: 2
     success_move_bps: 20
