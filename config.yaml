@@ -41,19 +41,19 @@ modes:
     primary_timeframe: "5m"
     confirm_timeframes: ["15m", "1h"]
     min_score_to_signal:
-      buy: 85
-      sell: 80
-    min_score_gap: 20
+      buy: 82
+      sell: 78
+    min_score_gap: 15
     evaluation_candles: 12
     min_candles_before_invalidation: 2
     success_move_bps: 20
     rr: 1.5
     atr_period: 14
     min_stop_bps: 60
-    cooldown_minutes: 30
+    cooldown_minutes: 20
     max_concurrent_positions: 5
-    min_atr_bps: 40
-    min_adx: 25
+    min_atr_bps: 30
+    min_adx: 20
     break_even_trigger_bps: 9999
     trailing:
       enabled: true
@@ -90,7 +90,7 @@ walkforward:
 
 parameter_space:
   scalp:
-    min_score_gap: {choices: [15, 20, 25]}
+    min_score_gap: {choices: [12, 15, 18]}
     rr: {choices: [1.5, 1.7, 2.0]}
     min_stop_bps: {choices: [50, 60, 70]}
     atr_multiplier: {choices: [1.2, 1.4, 1.8]}
