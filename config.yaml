@@ -1,5 +1,5 @@
 data:
-  exchange: bybit_linear
+  exchange: binance_futures
   cache_dir: data/candles
   default_days: 60
 
