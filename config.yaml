@@ -15,7 +15,7 @@ costs:
 
 risk:
   starting_balance_usd: 1000
-  risk_pct_per_trade: 1.5
+  risk_pct_per_trade: 3.0
   max_leverage: 5
   min_net_rr: 1.0
 
@@ -47,20 +47,18 @@ modes:
     rr: 1.5
     atr_period: 14
     min_stop_bps: 60
-    cooldown_minutes: 20
-    max_concurrent_positions: 5
-    min_atr_bps: 30
+    cooldown_minutes: 30
+    max_concurrent_positions: 3
+    min_atr_bps: 40
     min_adx: 20
     break_even_trigger_bps: 9999
     trailing:
       enabled: true
       trail_distance_bps: 40
     weights:
-      technical: 30
-      multi_timeframe: 20
-      volume_imbalance: 20
-      funding: 5
-      smc: 25
+      technical: 40
+      multi_timeframe: 30
+      smc: 30
     smc_weight_cap_if_htf_disagrees: 15
 
 active_modes:
@@ -70,12 +68,6 @@ layers:
   smc:
     fractal_left: 5
     fractal_right: 5
-  funding:
-    rolling_window: 100
-    min_history: 20
-  volume_imbalance:
-    lookback: 20
-    vol_multiplier: 1.5
 
 walkforward:
   n_windows: 2

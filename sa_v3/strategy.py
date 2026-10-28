@@ -16,16 +16,6 @@ class Strategy:
         scores = {
             "technical": layers.technical(primary),
             "multi_timeframe": layers.multi_timeframe(context["confirm_ohlcv"]),
-            "volume_imbalance": layers.volume_imbalance(
-                primary,
-                lookback=layer_cfg["volume_imbalance"].get("lookback", 20),
-                vol_multiplier=layer_cfg["volume_imbalance"].get("vol_multiplier", 1.5),
-            ),
-            "funding": layers.funding(
-                context["funding"],
-                rolling_window=layer_cfg["funding"].get("rolling_window", 100),
-                min_history=layer_cfg["funding"].get("min_history", 20),
-            ),
             "smc": layers.smc(
                 primary,
                 fractal_left=layer_cfg["smc"]["fractal_left"],
@@ -93,8 +83,7 @@ class Strategy:
 
         min_net_rr = self.config["risk"].get("min_net_rr")
         if min_net_rr is not None:
-            cost = (self.config["costs"]["fee_roundtrip_bps"]
-                    + self.config["costs"]["slippage_roundtrip_bps"])
+            cost = (self.config["costs"]["fee_roundtrip_bps"] + self.config["costs"]["slippage_roundtrip_bps"])
             net_reward = target_bps - cost
             net_risk = stop_bps + cost
             if net_risk <= 0 or (net_reward / net_risk) < min_net_rr:
