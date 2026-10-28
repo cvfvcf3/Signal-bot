@@ -38,18 +38,18 @@ modes:
     primary_timeframe: "5m"
     confirm_timeframes: ["15m", "1h"]
     min_score_to_signal:
-      buy: 75
-      sell: 75
-    min_score_gap: 12
+      buy: 80
+      sell: 76
+    min_score_gap: 13
     evaluation_candles: 12
     min_candles_before_invalidation: 2
     success_move_bps: 20
     rr: 1.5
     atr_period: 14
     min_stop_bps: 60
-    cooldown_minutes: 10
+    cooldown_minutes: 20
     max_concurrent_positions: 3
-    min_atr_bps: 25
+    min_atr_bps: 30
     min_adx: 20
     break_even_trigger_bps: 9999
     trailing:
