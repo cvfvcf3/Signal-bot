@@ -18,6 +18,11 @@ risk:
   risk_pct_per_trade: 3.0
   max_leverage: 5
   min_net_rr: 1.0
+  sizing_mode: margin
+  leverage: 100
+  first_margin_pct: 2.0
+  min_stop_bps_override: 80
+  max_total_leverage: 10
 
 adaptive_target:
   atr_multiplier: 1.4
@@ -50,7 +55,6 @@ modes:
     cooldown_minutes: 30
     max_concurrent_positions: 3
     min_atr_bps: 40
-    min_adx: 20
     break_even_trigger_bps: 9999
     trailing:
       enabled: true

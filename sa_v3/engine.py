@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 import pandas as pd
 from .strategy import Strategy
-from .utils import tf_to_ms, atr_pct, frac_to_bps, adx
+from .utils import tf_to_ms, atr_pct, frac_to_bps
 
 @dataclass
 class Position:
@@ -168,7 +168,8 @@ def precompute_btc_regimes(btc_df, config):
         reading = layers.technical(btc_df.iloc[:i + 1])
         b, s = reading["bullish_score"], reading["bearish_score"]
         regime = "bullish" if b >= threshold else ("bearish" if s >= threshold else "neutral")
-        out.append((int(btc_df.iloc[i]["ts"]), regime))
+        # regime is only usable once its 4h candle has CLOSED (no look-ahead)
+        out.append((int(btc_df.iloc[i]["ts"]) + tf_to_ms(config["btc_macro"]["htf_timeframe"]), regime))
     return out
 
 def regime_at(regimes, ts):
@@ -185,7 +186,6 @@ def run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_m
     cost_bps = _cost_bps(config)
     balance = config["risk"]["starting_balance_usd"]
     min_atr = mode_cfg.get("min_atr_bps", 0)
-    min_adx = mode_cfg.get("min_adx", 0)
 
     primary_maps = {}
     for sym in symbols:
@@ -255,10 +255,6 @@ def run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_m
                     current_atr = frac_to_bps(atr_pct(hist, period=mode_cfg["atr_period"]))
                     if current_atr < min_atr:
                         continue 
-                if min_adx > 0:
-                    current_adx = adx(hist, period=14)
-                    if current_adx < min_adx:
-                        continue
 
                 ctx = _build_context(config, mode, sym, ts, primary_maps[sym], idx, data, funding, btc_regimes, is_btc_map[sym])
                 if ctx is None: continue
@@ -267,8 +263,20 @@ def run_mode_backtest(config, mode, symbols, data, funding, btc_regimes, start_m
                 entry_price = float(primary_maps[sym].iloc[idx]["close"])
                 sizing = strategy.compute_tp_sl(decision["action"], entry_price, ctx["primary_ohlcv"], mode)
                 if sizing is None: continue
-                size_usd = position_size_usd(config, balance, entry_price, sizing["sl_price"])
+                rk = config["risk"]
+                if rk.get("sizing_mode") == "margin":
+                    # fixed margin % of balance x leverage, one entry, wider minimum stop
+                    stop_bps = max(float(rk.get("min_stop_bps_override", 80)), sizing["stop_bps"])
+                    sizing = dict(sizing)
+                    sizing["stop_bps"] = stop_bps
+                    sizing["sl_price"] = entry_price * (1 - stop_bps / 10_000) if decision["action"] == "BUY" else entry_price * (1 + stop_bps / 10_000)
+                    size_usd = balance * rk["first_margin_pct"] / 100.0 * rk["leverage"]
+                else:
+                    size_usd = position_size_usd(config, balance, entry_price, sizing["sl_price"])
                 if size_usd <= 0: continue
+                cap = rk.get("max_total_leverage")
+                if cap is not None and sum(p.size_usd for p in open_positions.values()) + size_usd > balance * cap:
+                    continue
                 import json
                 pos = Position(
                     signal_id=str(uuid.uuid4()), symbol=sym, mode=mode,
@@ -304,13 +312,15 @@ def _build_context(config, mode, sym, ts, primary_df, idx, data, funding, btc_re
     mode_cfg = config["modes"][mode]
     primary_hist = primary_df.iloc[:idx + 1]
     if len(primary_hist) < 60: return None
+    decision_ts = ts + tf_to_ms(mode_cfg["primary_timeframe"])   # decision is taken at the CLOSE of the primary candle
     confirm = {}
     for tf in mode_cfg["confirm_timeframes"]:
         df = data[sym].get(tf)
-        confirm[tf] = df[df["ts"] <= ts] if df is not None else pd.DataFrame()
+        # only higher-timeframe candles that have already closed (no look-ahead)
+        confirm[tf] = df[df["ts"] + tf_to_ms(tf) <= decision_ts] if df is not None else pd.DataFrame()
     f_df = funding.get(sym)
     f_hist = f_df[f_df["ts"] <= ts] if f_df is not None and len(f_df) else pd.DataFrame(columns=["ts", "rate"])
-    return {"mode": mode, "primary_ohlcv": primary_hist, "confirm_ohlcv": confirm, "funding": f_hist, "btc_regime": regime_at(btc_regimes, ts), "is_btc": is_btc}
+    return {"mode": mode, "primary_ohlcv": primary_hist, "confirm_ohlcv": confirm, "funding": f_hist, "btc_regime": regime_at(btc_regimes, decision_ts), "is_btc": is_btc}
 
 def _eval_invalidation(strategy, config, mode, sym, ts, data, funding, btc_regimes, is_btc):
     mode_cfg = config["modes"][mode]
