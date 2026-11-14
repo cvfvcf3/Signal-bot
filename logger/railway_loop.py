@@ -1,7 +1,8 @@
 """Railway worker: E-signal forward logger (alert + log only, NO trading). Runs forever.
 Signal E = 5m quote-volume spike (>= 8x the prior 24h mean) + taker-flow imbalance (12-bar mean >= +/-0.1), first bar of the event.
 Data source: SOURCE=binance | okx | auto (auto = Binance if reachable from this server, else OKX).  Execution check: MEXC order book."""
-import os, sys, time, json, csv, urllib.request, urllib.parse
+import os, sys, time, json, csv, threading, urllib.request, urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 COINS = ["ETH", "SOL", "XRP", "BNB", "DOGE", "ADA", "LINK", "AVAX", "LTC"]
 BIN, OKX, MEXC = "https://fapi.binance.com", "https://www.okx.com", "https://contract.mexc.com"
 VOLX, VOLX_NEAR, IMB, HOLD, K, NOTIONAL = 8.0, 5.0, 0.10, 36, 2.0, 200.0
@@ -11,6 +12,8 @@ SOURCE = os.environ.get("SOURCE", "auto").lower()
 DIR = os.environ.get("LOG_DIR") or ("/data/e_logs" if os.path.isdir("/data") else "e_logs"); os.makedirs(DIR, exist_ok=True)
 SIGF, NEARF, OUTF, STF = f"{DIR}/signals.csv", f"{DIR}/near.csv", f"{DIR}/outcomes.csv", f"{DIR}/state.json"
 TG_TOKEN, TG_CHAT = os.environ.get("TG_TOKEN"), os.environ.get("TG_CHAT")
+DASH_KEY, PORT = os.environ.get("DASH_KEY"), int(os.environ.get("PORT", "8080"))
+LIVE = {}   # coin -> latest numbers for the live dashboard / telegram /status
 
 def log(*a): print(time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), *a, flush=True)
 
@@ -28,22 +31,27 @@ def api(url, params=None):
 def mean(a): return sum(a) / len(a)
 
 def bars_binance(coin, now_ms):
-    k = [x for x in api(BIN + "/fapi/v1/klines", {"symbol": coin + "USDT", "interval": "5m", "limit": 300}) if int(x[0]) + BAR <= now_ms]
+    allk = api(BIN + "/fapi/v1/klines", {"symbol": coin + "USDT", "interval": "5m", "limit": 300})
+    k = [x for x in allk if int(x[0]) + BAR <= now_ms]
+    fmr = [x for x in allk if int(x[0]) + BAR > now_ms]
+    fm = (int(fmr[-1][0]), float(fmr[-1][7]), float(fmr[-1][4])) if fmr else None
     ts = [int(x[0]) for x in k]; h = [float(x[2]) for x in k]; l = [float(x[3]) for x in k]; c = [float(x[4]) for x in k]
     qv = [float(x[7]) for x in k]
     tk = {int(x[0]): (float(x[10]), float(x[7]) - float(x[10])) for x in k}     # ts -> (taker buy, taker sell) in quote volume
-    return ts, h, l, c, qv, tk
+    return ts, h, l, c, qv, tk, fm
 
 def bars_okx(coin, now_ms):
     d = api(OKX + "/api/v5/market/candles", {"instId": f"{coin}-USDT-SWAP", "bar": "5m", "limit": 300})
     if d.get("code") != "0": raise RuntimeError("okx candles: " + str(d.get("msg")))
     rows = sorted([x for x in d["data"] if int(x[0]) + BAR <= now_ms], key=lambda x: int(x[0]))
+    fmr = [x for x in d["data"] if int(x[0]) + BAR > now_ms]
+    fm = (int(fmr[0][0]), float(fmr[0][7]) if float(fmr[0][7]) > 0 else float(fmr[0][6]) * float(fmr[0][4]), float(fmr[0][4])) if fmr else None
     ts = [int(x[0]) for x in rows]; h = [float(x[2]) for x in rows]; l = [float(x[3]) for x in rows]; c = [float(x[4]) for x in rows]
     qv = [float(x[7]) if float(x[7]) > 0 else float(x[6]) * float(x[4]) for x in rows]
     t = api(OKX + "/api/v5/rubik/stat/taker-volume-contract", {"instId": f"{coin}-USDT-SWAP", "period": "5m"})
     if t.get("code") != "0": raise RuntimeError("okx taker: " + str(t.get("msg")))
     tk = {int(x[0]): (float(x[2]), float(x[1])) for x in t["data"]}                # rows are [ts, sell, buy]
-    return ts, h, l, c, qv, tk
+    return ts, h, l, c, qv, tk, fm
 
 def get_bars(coin, now_ms, src): return bars_binance(coin, now_ms) if src == "binance" else bars_okx(coin, now_ms)
 
@@ -108,9 +116,11 @@ def vwap_fill(levels, cs, notional):
         if left <= 1e-9: break
     return (notional - left) / qty if qty > 0 and left <= 1e-9 else None
 
-def tg(msg):
+def tg(msg, md=False):
     if TG_TOKEN and TG_CHAT:
-        try: urllib.request.urlopen(urllib.request.Request(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data=urllib.parse.urlencode({"chat_id": TG_CHAT, "text": msg}).encode()), timeout=15)
+        p = {"chat_id": TG_CHAT, "text": msg}
+        if md: p["parse_mode"] = "Markdown"
+        try: urllib.request.urlopen(urllib.request.Request(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data=urllib.parse.urlencode(p).encode()), timeout=15)
         except Exception as e: log("telegram failed", e)
 
 def tg_doc(path):
@@ -123,6 +133,86 @@ def tg_doc(path):
         urllib.request.urlopen(urllib.request.Request(f"https://api.telegram.org/bot{TG_TOKEN}/sendDocument", data=body,
                                headers={"Content-Type": f"multipart/form-data; boundary={b}"}), timeout=30)
     except Exception as e: log("telegram doc failed", e)
+
+def live_update(coin, now, ts, c, qv, tk, fm):
+    if len(ts) < 292: return
+    f = feats(qv, ts, tk, len(ts) - 1); base = mean(qv[-289:-1]); px = fm[2] if fm else c[-1]
+    proj = None
+    if fm and base > 0:
+        frac = max((now - fm[0]) / BAR, 0.15); proj = fm[1] / frac / base          # forming bar volume, projected to a full bar
+    tier = "-"
+    if f and abs(f[1]) > IMB: tier = "SIGNAL" if f[0] > VOLX else ("near" if f[0] > VOLX_NEAR else "-")
+    LIVE[coin] = dict(px=px, volx=None if f is None else round(f[0], 2), imb=None if f is None else round(f[1], 3),
+                      proj=None if proj is None else round(proj, 2), tier=tier, bar=utc(ts[-1] + BAR), upd=utc(now))
+
+def live_refresh(now):
+    for coin in COINS:
+        try: ts, h, l, c, qv, tk, fm = get_bars(coin, now, SRC[0]); live_update(coin, now, ts, c, qv, tk, fm)
+        except Exception as ex: log("live refresh error", coin, ex)
+
+SRC = ["?"]
+def status_text():
+    rows = ["coin   price      volx  now*  imb12  flag"]
+    for coin in COINS:
+        v = LIVE.get(coin)
+        if not v: rows.append(f"{coin:5s}  (no data yet)"); continue
+        f = lambda x, w, d=1: (" " * (w - 1) + "-") if x is None else f"{x:{w}.{d}f}"
+        rows.append(f"{coin:5s} {v['px']:>9.4g} {f(v['volx'], 6)} {f(v['proj'], 5)} {f(v['imb'], 6, 2)}  {v['tier']}")
+    return "\n".join(rows) + f"\n(source {SRC[0]}; volx = last closed 5m bar vs 24h mean; now* = forming bar projected; signal needs volx>{VOLX:g} and |imb12|>{IMB:g})"
+
+def recent_rows(path, n=8):
+    try: lines = open(path).read().strip().splitlines()[1:][-n:]
+    except Exception: return []
+    return [x.split(",") for x in lines]
+
+def snapshot():
+    return {"src": SRC[0], "now": utc(int(time.time() * 1000)), "live": LIVE, "signals": recent_rows(SIGF), "outcomes": recent_rows(OUTF), "near": recent_rows(NEARF)}
+
+PAGE = """<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>E logger live</title>
+<style>body{font-family:system-ui;margin:8px;background:#0b0f14;color:#dde}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:5px 6px;text-align:right;border-bottom:1px solid #223}
+th:first-child,td:first-child{text-align:left}.s{background:#7a1d1d}.n{background:#5a4a12}h3{margin:10px 0 4px}small{color:#889}</style></head><body>
+<div id=hdr></div><table id=t></table><h3>Recent signals</h3><table id=sg></table><h3>Recent outcomes</h3><table id=oc></table>
+<script>
+const K=new URLSearchParams(location.search).get('k')||'';
+function fx(x,d){return x===null||x===undefined?'-':Number(x).toFixed(d)}
+async function go(){try{const r=await fetch('api?k='+encodeURIComponent(K));const j=await r.json();
+document.getElementById('hdr').innerHTML='<b>E logger live</b> <small>source '+j.src+' | '+j.now+' UTC | volx = last closed bar vs 24h mean, now* = forming bar projected | signal: volx&gt;8 and |imb|&gt;0.1</small>';
+let h='<tr><th>coin<th>price<th>volx<th>now*<th>imb12<th>flag</tr>';
+for(const c in j.live){const v=j.live[c];h+='<tr class="'+(v.tier=='SIGNAL'?'s':v.tier=='near'?'n':'')+'"><td>'+c+'<td>'+v.px+'<td>'+fx(v.volx,1)+'<td>'+fx(v.proj,1)+'<td>'+fx(v.imb,2)+'<td>'+v.tier+'</tr>'}
+document.getElementById('t').innerHTML=h;
+document.getElementById('sg').innerHTML='<tr><th>time<th>coin<th>side<th>slip bps<th>latency</tr>'+j.signals.slice().reverse().map(r=>'<tr><td>'+(r[1]||'').slice(5,16)+'<td>'+r[5]+'<td>'+r[6]+'<td>'+(r[17]||'-')+'<td>'+(r[3]||'')+'s</tr>').join('');
+document.getElementById('oc').innerHTML='<tr><th>id<th>exit<th>gross bps</tr>'+j.outcomes.slice().reverse().map(r=>'<tr><td>'+r[0]+'<td>'+r[1]+'<td>'+r[2]+'</tr>').join('');
+}catch(e){document.getElementById('hdr').textContent='connection problem...'}}
+go();setInterval(go,10000);
+</script></body></html>"""
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
+        if (q.get("k") or [""])[0] != DASH_KEY:
+            self.send_response(403); self.end_headers(); self.wfile.write(b"forbidden"); return
+        if u.path.rstrip("/").endswith("api"): body, ct = json.dumps(snapshot()).encode(), "application/json"
+        else: body, ct = PAGE.encode(), "text/html; charset=utf-8"
+        self.send_response(200); self.send_header("Content-Type", ct); self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(body)
+
+def start_dashboard():
+    if not DASH_KEY: log("dashboard off (set DASH_KEY to enable)"); return
+    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler); threading.Thread(target=srv.serve_forever, daemon=True).start(); log("dashboard on port", PORT)
+
+def tg_poll():
+    off = 0
+    while True:
+        try:
+            d = api(f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates", {"timeout": 25, "offset": off})
+            for u in d.get("result", []):
+                off = u["update_id"] + 1; m = u.get("message") or {}
+                if str((m.get("chat") or {}).get("id")) != str(TG_CHAT): continue
+                t = (m.get("text") or "").strip().lower()
+                if t.startswith("/status"): tg("```\n" + status_text() + "\n```", md=True)
+                elif t.startswith("/last"):
+                    r = recent_rows(SIGF, 5); tg("last signals:\n" + ("\n".join(f"{x[1]} {x[5]} {x[6]} {x[7]} slip {x[17]}bps" for x in r) if r else "none yet"))
+        except Exception as e: log("tg poll error", e); time.sleep(10)
 
 def load_state():
     try: return json.load(open(STF))
@@ -195,7 +285,7 @@ def cycle(st, src, now=None):
     now = now or int(time.time() * 1000); ok, newc, top, lag = 0, 0, ("-", 0.0), []
     for coin in COINS:
         try:
-            ts, h, l, c, qv, tk = get_bars(coin, now, src); ok += 1
+            ts, h, l, c, qv, tk, fm = get_bars(coin, now, src); ok += 1; live_update(coin, now, ts, c, qv, tk, fm)
             if ts and tk:
                 done = [t for t in tk if t + BAR <= now]; lag.append(round((ts[-1] - max(done)) / BAR) if done else 99)
             if len(ts) >= 292:
@@ -220,12 +310,15 @@ def pick_source():
     except Exception as e: log("binance not reachable from this server:", e); return "okx"
 
 def main():
-    src = pick_source(); st = load_state(); last_hb = 0; last_doc = time.time()
+    src = pick_source(); SRC[0] = src; st = load_state(); last_hb = 0; last_doc = time.time()
+    start_dashboard()
+    if TG_TOKEN and TG_CHAT: threading.Thread(target=tg_poll, daemon=True).start()
     msg = f"E logger started | source={src} | log dir={DIR} | telegram={'ON' if TG_TOKEN and TG_CHAT else 'off'}"; log(msg); tg(msg)
     while True:
         nxt = (int(time.time() * 1000) // BAR + 1) * BAR + 6000
         while time.time() * 1000 < nxt:
-            time.sleep(min(30, max(0.5, nxt / 1000 - time.time())))
+            time.sleep(min(20, max(0.5, nxt / 1000 - time.time())))
+            if time.time() * 1000 < nxt - 3000: live_refresh(int(time.time() * 1000))
             if st["pending"]: process_pending(st, int(time.time() * 1000)); save_state(st)
         cycle(st, src)
         if time.time() - last_hb > 6 * 3600:
