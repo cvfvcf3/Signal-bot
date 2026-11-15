@@ -204,7 +204,7 @@ def tg_poll():
     off = 0
     while True:
         try:
-            d = api(f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates", {"timeout": 25, "offset": off})
+            d = json.loads(urllib.request.urlopen(f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates?timeout=20&offset={off}", timeout=40).read().decode())
             for u in d.get("result", []):
                 off = u["update_id"] + 1; m = u.get("message") or {}
                 if str((m.get("chat") or {}).get("id")) != str(TG_CHAT): continue
@@ -259,10 +259,24 @@ def finish(p):
         for hi, lo, cl in rows[:nb]:
             if (side == 1 and lo <= e * (1 - thr)) or (side == -1 and hi >= e * (1 + thr)): return 1
         return 0
-    cp = p["chk"]
+    def exc(nb):   # (worst adverse, best favourable) excursion in bps vs the signal close within the first nb bars
+        sub = rows[:nb]
+        if side == 1: return max((e - lo) / e * 1e4 for hi, lo, cl in sub), max((hi - e) / e * 1e4 for hi, lo, cl in sub)
+        return max((hi - e) / e * 1e4 for hi, lo, cl in sub), max((e - lo) / e * 1e4 for hi, lo, cl in sub)
+    def limit_pnl(off):   # LIMIT entry `off` bps better than the signal close, filled within 3 bars, then same stop / 3h exit
+        for k, (hi, lo, cl) in enumerate(rows[:3]):
+            if (side == 1 and lo <= e * (1 - off / 1e4)) or (side == -1 and hi >= e * (1 + off / 1e4)):
+                ent = e * (1 - side * off / 1e4); x2 = rows[-1][2]
+                for hi2, lo2, cl2 in rows[k + 1:]:
+                    if (side == 1 and lo2 <= sl) or (side == -1 and hi2 >= sl): x2 = sl; break
+                return round(side * (x2 - ent) / ent * 1e4, 1)
+        return None
+    cp = p["chk"]; m3, m12, m36 = exc(3), exc(12), exc(len(rows)); r1 = lambda v: round(v, 1)
     append(OUTF, ["id", "exit_reason", "gross_bps_from_close", "limit_fill_1bar_0bps", "limit_fill_3bar_0bps", "limit_fill_3bar_2bps", "limit_fill_3bar_5bps",
-                  "mid_1m", "mid_5m", "mid_15m", "mid_60m"],
-           [p["id"], why, round(gross, 1), fills(1, 0), fills(3, 0), fills(3, 0.0002), fills(3, 0.0005), cp.get("60"), cp.get("300"), cp.get("900"), cp.get("3600")])
+                  "mid_1m", "mid_5m", "mid_15m", "mid_60m", "mae3", "mfe3", "mae12", "mfe12", "mae36", "mfe36",
+                  "lim5_gross", "lim10_gross", "lim20_gross"],
+           [p["id"], why, round(gross, 1), fills(1, 0), fills(3, 0), fills(3, 0.0002), fills(3, 0.0005), cp.get("60"), cp.get("300"), cp.get("900"), cp.get("3600"),
+            r1(m3[0]), r1(m3[1]), r1(m12[0]), r1(m12[1]), r1(m36[0]), r1(m36[1]), limit_pnl(5), limit_pnl(10), limit_pnl(20)])
     tg(f'outcome {p["id"]}: {why} {round(gross, 1)} bps (gross, from signal close)')
     return True
 
