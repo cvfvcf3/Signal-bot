@@ -17,13 +17,22 @@ LIVE = {}   # coin -> latest numbers for the live dashboard / telegram /status
 
 def log(*a): print(time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), *a, flush=True)
 
+BAN = {"until": 0.0}
+class RateLimited(Exception): pass
+
 def api(url, params=None):
     if params: url += "?" + urllib.parse.urlencode(params)
+    if url.startswith(BIN) and time.time() < BAN["until"]: raise RateLimited(f"binance paused {int(BAN['until'] - time.time())}s more")
     last = None
     for i in range(3):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "e-logger/1.0"}), timeout=15) as r:
                 return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code in (418, 429) and url.startswith(BIN):
+                wait = int(e.headers.get("Retry-After") or (180 if e.code == 418 else 60)); BAN["until"] = time.time() + wait
+                log(f"binance {e.code} -> pausing binance calls for {wait}s"); raise RateLimited(str(e.code))
+            last = e; time.sleep(1 + i)
         except Exception as e:
             last = e; time.sleep(1 + i)
     raise last
@@ -148,6 +157,7 @@ def live_update(coin, now, ts, c, qv, tk, fm):
 def live_refresh(now):
     for coin in COINS:
         try: ts, h, l, c, qv, tk, fm = get_bars(coin, now, SRC[0]); live_update(coin, now, ts, c, qv, tk, fm)
+        except RateLimited: return
         except Exception as ex: log("live refresh error", coin, ex)
 
 SRC = ["?"]
@@ -296,10 +306,12 @@ def process_pending(st, now):
     st["pending"] = keep
 
 def cycle(st, src, now=None):
-    now = now or int(time.time() * 1000); ok, newc, top, lag = 0, 0, ("-", 0.0), []
+    now = now or int(time.time() * 1000); ok, newc, top, lag = 0, 0, ("-", 0.0), []; src0 = src
     for coin in COINS:
         try:
-            ts, h, l, c, qv, tk, fm = get_bars(coin, now, src); ok += 1; live_update(coin, now, ts, c, qv, tk, fm)
+            try: bars = get_bars(coin, now, src)
+            except RateLimited: src = "okx"; bars = get_bars(coin, now, src)
+            ts, h, l, c, qv, tk, fm = bars; ok += 1; live_update(coin, now, ts, c, qv, tk, fm)
             if ts and tk:
                 done = [t for t in tk if t + BAR <= now]; lag.append(round((ts[-1] - max(done)) / BAR) if done else 99)
             if len(ts) >= 292:
@@ -315,7 +327,7 @@ def cycle(st, src, now=None):
                 record(coin, ts, h, l, c, i, side, tier, volx, imb, now, st, src); newc += 1
         except Exception as ex: log("error", coin, ex)
     process_pending(st, now); save_state(st)
-    log(f"{src} | coins ok {ok}/{len(COINS)} | max volx {top[0]} {top[1]:.1f} | taker lag {lag} | new signals {newc} | pending {len(st['pending'])}")
+    log(f"{src}{' (fallback, binance paused)' if src != src0 else ''} | coins ok {ok}/{len(COINS)} | max volx {top[0]} {top[1]:.1f} | taker lag {lag} | new signals {newc} | pending {len(st['pending'])}")
     return ok
 
 def pick_source():
@@ -324,7 +336,7 @@ def pick_source():
     except Exception as e: log("binance not reachable from this server:", e); return "okx"
 
 def main():
-    src = pick_source(); SRC[0] = src; st = load_state(); last_hb = 0; last_doc = time.time()
+    src = pick_source(); SRC[0] = src; st = load_state(); last_hb = 0; last_doc = time.time(); last_live = 0.0
     start_dashboard()
     if TG_TOKEN and TG_CHAT: threading.Thread(target=tg_poll, daemon=True).start()
     msg = f"E logger started | source={src} | log dir={DIR} | telegram={'ON' if TG_TOKEN and TG_CHAT else 'off'}"; log(msg); tg(msg)
@@ -332,7 +344,7 @@ def main():
         nxt = (int(time.time() * 1000) // BAR + 1) * BAR + 6000
         while time.time() * 1000 < nxt:
             time.sleep(min(20, max(0.5, nxt / 1000 - time.time())))
-            if time.time() * 1000 < nxt - 3000: live_refresh(int(time.time() * 1000))
+            if time.time() * 1000 < nxt - 3000 and time.time() - last_live >= 60: last_live = time.time(); live_refresh(int(time.time() * 1000))
             if st["pending"]: process_pending(st, int(time.time() * 1000)); save_state(st)
         cycle(st, src)
         if time.time() - last_hb > 6 * 3600:
